@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: abay-ride-backend
+    runtime: node
+    rootDir: .
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000          # Render assigns its own port via $PORT — this is just a hint
+      - key: SUPABASE_URL
+        sync: false           # fill in Render dashboard
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: CHAPA_SECRET_KEY
+        sync: false
+      - key: CHAPA_BASE_URL
+        value: https://api.chapa.co/v1
+      - key: CHAPA_WEBHOOK_SECRET
+        sync: false
+      - key: FRONTEND_SUCCESS_URL
+        sync: false
+      - key: ALLOWED_ORIGIN
+        sync: false

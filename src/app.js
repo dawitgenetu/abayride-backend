@@ -18,7 +18,9 @@ const ALLOWED_ORIGINS = [
   "http://localhost:3000",
   "http://127.0.0.1:5173",
   "http://127.0.0.1:5174",
-];
+  // Production — set ALLOWED_ORIGIN env var to your Render/Vercel admin URL
+  process.env.ALLOWED_ORIGIN,
+].filter(Boolean);
 
 const corsOptions = {
   origin: (origin, callback) => {

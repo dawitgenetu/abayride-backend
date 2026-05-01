@@ -1,5 +1,6 @@
 const { z } = require("zod");
 const { supabaseAdmin } = require("../config/supabase");
+const { fetchFareSettingsInternal } = require("./fareController");
 
 const DEV_COMMISSION_RATE = 0.10;
 const DRIVER_RATE         = 0.90;
@@ -23,7 +24,14 @@ const requestRide = async (req, res) => {
   const parsed = requestRideSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ message: parsed.error.message });
 
-  const { total_fare, distance_km, payment_method } = parsed.data;
+  const { distance_km, payment_method } = parsed.data;
+
+  // Always recalculate fare server-side using live settings
+  const settings       = await fetchFareSettingsInternal();
+  const total_fare     = Math.max(
+    settings.standby_fee,
+    Math.round(distance_km * settings.price_per_km + settings.standby_fee)
+  );
   const dev_fee        = Math.round(total_fare * DEV_COMMISSION_RATE * 100) / 100;
   const driver_earning = Math.round(total_fare * DRIVER_RATE * 100) / 100;
 
@@ -75,7 +83,24 @@ const getMyRides = async (req, res) => {
   return res.json(data);
 };
 
-// ── GET /rides/available — drivers see ONLY today's requested rides ────────────
+// ── GET /rides/active — rider's current non-terminal ride ─────────────────────
+const getActiveRide = async (req, res) => {
+  // 'expired' is intentionally excluded — it's a terminal state for the rider
+  const ACTIVE_STATUSES = ["requested", "accepted", "arrived", "picked_up", "ongoing"];
+  const { data, error } = await supabaseAdmin
+    .from("rides")
+    .select("*")
+    .eq("rider_id", req.user.id)
+    .in("status", ACTIVE_STATUSES)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) return res.status(400).json({ message: error.message });
+  return res.json(data);
+};
+
+// ── GET /rides/available — drivers see ONLY today's non-expired requested rides
 const getAvailableRides = async (_req, res) => {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
@@ -103,7 +128,11 @@ const acceptRide = async (req, res) => {
 
   const { data, error } = await supabaseAdmin
     .from("rides")
-    .update({ status: "accepted", driver_id: req.user.id })
+    .update({
+      status:      "accepted",
+      driver_id:   req.user.id,
+      accepted_at: new Date().toISOString(), // ← start the 1-hour expiry clock
+    })
     .eq("id", rideId)
     .select("*")
     .single();
@@ -125,6 +154,11 @@ const updateRideStatus = async (req, res) => {
 
   if (fetchErr || !ride) return res.status(404).json({ message: "Ride not found." });
 
+  // Expired rides cannot be transitioned
+  if (ride.status === "expired") {
+    return res.status(400).json({ message: "This ride has expired and can no longer be updated." });
+  }
+
   if (parsed.data.status === "completed" && ride.payment_status !== "paid") {
     return res.status(400).json({ message: "Payment required before completing the ride." });
   }
@@ -137,6 +171,7 @@ const updateRideStatus = async (req, res) => {
     ongoing:   ["completed"],
     completed: [],
     cancelled: [],
+    expired:   [],
   };
 
   const allowed = TRANSITIONS[ride.status] || [];
@@ -165,20 +200,45 @@ const updateRideStatus = async (req, res) => {
   return res.json(data);
 };
 
-// ── GET /rides/active — rider's current non-terminal ride ─────────────────────
-const getActiveRide = async (req, res) => {
-  const ACTIVE_STATUSES = ["requested", "accepted", "arrived", "picked_up", "ongoing"];
-  const { data, error } = await supabaseAdmin
-    .from("rides")
-    .select("*")
-    .eq("rider_id", req.user.id)
-    .in("status", ACTIVE_STATUSES)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+// ── DELETE /rides/:id — rider deletes their own requested ride (within 1 hour) ─
+const DELETE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
-  if (error) return res.status(400).json({ message: error.message });
-  return res.json(data);
+const deleteRide = async (req, res) => {
+  const { data: ride, error: fetchErr } = await supabaseAdmin
+    .from("rides")
+    .select("id, rider_id, status, created_at")
+    .eq("id", req.params.id)
+    .single();
+
+  if (fetchErr || !ride) return res.status(404).json({ message: "Ride not found." });
+
+  // Only the rider who created it can delete it
+  if (ride.rider_id !== req.user.id) {
+    return res.status(403).json({ message: "You can only delete your own ride requests." });
+  }
+
+  // Only 'requested' rides can be deleted — once a driver accepts, use cancel instead
+  if (ride.status !== "requested") {
+    return res.status(400).json({
+      message: `Cannot delete a ride with status '${ride.status}'. Only 'requested' rides can be deleted.`,
+    });
+  }
+
+  // Enforce 1-hour deletion window
+  const ageMs = Date.now() - new Date(ride.created_at).getTime();
+  if (ageMs > DELETE_WINDOW_MS) {
+    return res.status(403).json({
+      message: "The 1-hour deletion window has passed. This ride can no longer be deleted.",
+    });
+  }
+
+  const { error: deleteErr } = await supabaseAdmin
+    .from("rides")
+    .delete()
+    .eq("id", req.params.id);
+
+  if (deleteErr) return res.status(400).json({ message: deleteErr.message });
+  return res.json({ message: "Ride deleted successfully." });
 };
 
 module.exports = {
@@ -188,4 +248,5 @@ module.exports = {
   acceptRide,
   updateRideStatus,
   getActiveRide,
+  deleteRide,
 };

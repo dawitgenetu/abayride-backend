@@ -16,8 +16,9 @@ const {
   getAnalyticsCharts,
   getNotificationsSummary,
 } = require("../controllers/adminController");
+const { getFareSettings, updateFareSettings } = require("../controllers/fareController");
 const { authenticateUser, authorizeRole } = require("../middlewares/authMiddleware");
-const { cleanupStaleRides } = require("../services/cleanupService");
+const { cleanupStaleRides, expireStaleRides } = require("../services/cleanupService");
 
 const router = express.Router();
 
@@ -42,11 +43,22 @@ router.get("/admin/analytics", getAnalytics);
 router.get("/admin/analytics/charts", getAnalyticsCharts);
 router.get("/admin/notifications/summary", getNotificationsSummary);
 
+// Fare settings
+router.get("/admin/fare-settings", getFareSettings);
+router.put("/admin/fare-settings", updateFareSettings);
+
 // Manual cleanup trigger — admin only
 router.post("/admin/cleanup/stale-rides", async (_req, res) => {
   const result = await cleanupStaleRides();
   if (result.error) return res.status(500).json({ message: result.error });
   return res.json({ message: `Deleted ${result.deleted} stale ride(s).`, deleted: result.deleted });
+});
+
+// Manual expiry trigger — admin only
+router.post("/admin/cleanup/expire-rides", async (_req, res) => {
+  const result = await expireStaleRides();
+  if (result.error) return res.status(500).json({ message: result.error });
+  return res.json({ message: `Expired ${result.expired} ride(s).`, expired: result.expired });
 });
 
 module.exports = router;
