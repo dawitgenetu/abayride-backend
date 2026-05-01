@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: abay-ride-backend
+    name: abayride-backend
     runtime: node
     rootDir: .
     buildCommand: npm install
@@ -8,10 +8,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 10000          # Render assigns its own port via $PORT — this is just a hint
       - key: SUPABASE_URL
-        sync: false           # fill in Render dashboard
+        sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
@@ -23,6 +21,6 @@ services:
       - key: CHAPA_WEBHOOK_SECRET
         sync: false
       - key: FRONTEND_SUCCESS_URL
-        sync: false
+        value: https://abayride-backend.onrender.com
       - key: ALLOWED_ORIGIN
         sync: false
