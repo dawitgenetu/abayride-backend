@@ -25,9 +25,34 @@ const login = async (req, res) => {
 };
 
 const getMe = async (req, res) => {
-  const { data, error } = await supabaseAdmin.from("users").select("*").eq("id", req.user.id).single();
+  const { data: profile, error } = await supabaseAdmin
+    .from("users")
+    .select("*")
+    .eq("id", req.user.id)
+    .single();
+
   if (error) return res.status(400).json({ message: error.message });
-  return res.json({ auth_user: req.user, profile: data });
+
+  // For drivers, include approval status so the mobile app
+  // doesn't need a second API call
+  let driverProfile = null;
+  if (profile.role === "driver") {
+    const { data: driver } = await supabaseAdmin
+      .from("drivers")
+      .select("id, approval_status, is_approved, rejection_reason, wallet_balance")
+      .eq("user_id", req.user.id)
+      .maybeSingle();
+    driverProfile = driver ?? null;
+  }
+
+  return res.json({
+    // Flat fields for easy access
+    ...profile,
+    driver: driverProfile,
+    // Legacy nested shape (admin web uses this)
+    auth_user: req.user,
+    profile,
+  });
 };
 
 module.exports = { login, getMe };

@@ -64,7 +64,6 @@ const getDriverEarnings = async (req, res) => {
   if (error) return res.status(400).json({ message: error.message });
 
   const totalCompletedRides = data.length;
-  // Use driver_earning if available (new column), fall back to 90% of fare
   const totalEarnings = data.reduce((sum, ride) => {
     const earning = Number(ride.driver_earning) > 0
       ? Number(ride.driver_earning)
@@ -76,4 +75,17 @@ const getDriverEarnings = async (req, res) => {
   return res.json({ totalCompletedRides, totalEarnings: Math.round(totalEarnings * 100) / 100, paidRides });
 };
 
-module.exports = { updateDriverStatus, registerDriverProfile, getDriverEarnings };
+// GET /drivers/me — returns the driver's own profile (approval status etc.)
+const getDriverMe = async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from("drivers")
+    .select("*")
+    .eq("user_id", req.user.id)
+    .maybeSingle();
+
+  if (error) return res.status(400).json({ message: error.message });
+  if (!data)  return res.status(404).json({ message: "Driver profile not found." });
+  return res.json(data);
+};
+
+module.exports = { updateDriverStatus, registerDriverProfile, getDriverEarnings, getDriverMe };
