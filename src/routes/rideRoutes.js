@@ -7,6 +7,7 @@ const {
   updateRideStatus,
   getActiveRide,
   deleteRide,
+  createManualRide,
 } = require("../controllers/rideController");
 const { getFareSettings } = require("../controllers/fareController");
 const { authenticateUser, authorizeRole } = require("../middlewares/authMiddleware");
@@ -17,6 +18,7 @@ const router = express.Router();
 router.get("/fare-settings", authenticateUser, getFareSettings);
 
 router.post("/rides", authenticateUser, authorizeRole("rider"), requestRide);
+router.post("/rides/manual", authenticateUser, authorizeRole("driver"), createManualRide);
 router.get("/rides/active", authenticateUser, authorizeRole("rider"), getActiveRide);
 router.get("/rides/my", authenticateUser, getMyRides);
 router.get("/rides/available", authenticateUser, authorizeRole("driver"), getAvailableRides);

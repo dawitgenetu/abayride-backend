@@ -17,6 +17,7 @@ const {
   getNotificationsSummary,
 } = require("../controllers/adminController");
 const { getFareSettings, updateFareSettings } = require("../controllers/fareController");
+const { getDriverWalletAdmin } = require("../controllers/walletController");
 const { authenticateUser, authorizeRole } = require("../middlewares/authMiddleware");
 const { cleanupStaleRides, expireStaleRides } = require("../services/cleanupService");
 
@@ -46,6 +47,9 @@ router.get("/admin/notifications/summary", getNotificationsSummary);
 // Fare settings
 router.get("/admin/fare-settings", getFareSettings);
 router.put("/admin/fare-settings", updateFareSettings);
+
+// Driver wallet (admin view)
+router.get("/admin/drivers/:id/wallet", getDriverWalletAdmin);
 
 // Manual cleanup trigger — admin only
 router.post("/admin/cleanup/stale-rides", async (_req, res) => {

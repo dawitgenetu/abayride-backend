@@ -1,6 +1,7 @@
 const { z } = require("zod");
 const { supabaseAdmin } = require("../config/supabase");
 const { fetchFareSettingsInternal } = require("./fareController");
+const { processRideWallet } = require("./walletController");
 
 const DEV_COMMISSION_RATE = 0.10;
 const DRIVER_RATE         = 0.90;
@@ -13,6 +14,13 @@ const requestRideSchema = z.object({
   total_fare:           z.number().positive(),
   distance_km:          z.number().min(0),
   payment_method:       z.enum(["cash", "chapa"]).default("cash"),
+});
+
+const manualRideSchema = z.object({
+  pickup_location:      pointSchema,
+  destination_location: pointSchema,
+  payment_method:       z.enum(["cash", "chapa"]).default("cash"),
+  distance_km:          z.number().min(0).optional(),
 });
 
 const updateRideStatusSchema = z.object({
@@ -185,7 +193,7 @@ const updateRideStatus = async (req, res) => {
   if (userRole === "rider" && !["picked_up", "cancelled"].includes(parsed.data.status)) {
     return res.status(403).json({ message: "Riders can only confirm boarding or cancel." });
   }
-  if (userRole === "driver" && parsed.data.status === "picked_up") {
+  if (userRole === "driver" && parsed.data.status === "picked_up" && ride.rider_id) {
     return res.status(403).json({ message: "Only the rider can confirm boarding." });
   }
 
@@ -197,10 +205,86 @@ const updateRideStatus = async (req, res) => {
     .single();
 
   if (error) return res.status(400).json({ message: error.message });
+
+  // Process wallet when ride completes
+  if (parsed.data.status === "completed") {
+    processRideWallet(data.id).catch(err =>
+      console.error("[Wallet] processRideWallet failed:", err?.message)
+    );
+  }
+
   return res.json(data);
 };
 
-// ── DELETE /rides/:id — rider deletes their own requested ride (within 1 hour) ─
+// ── POST /rides/manual — driver creates a ride for a walk-in passenger ────────
+const createManualRide = async (req, res) => {
+  const parsed = manualRideSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: parsed.error.message });
+
+  const { pickup_location, destination_location, payment_method } = parsed.data;
+
+  // Calculate distance if not provided
+  const distance_km = parsed.data.distance_km ?? haversineDistance(
+    pickup_location.lat, pickup_location.lng,
+    destination_location.lat, destination_location.lng
+  );
+
+  // Fare from live settings
+  const settings       = await fetchFareSettingsInternal();
+  const total_fare     = Math.max(
+    settings.standby_fee,
+    Math.round(distance_km * settings.price_per_km + settings.standby_fee)
+  );
+  const dev_fee        = Math.round(total_fare * DEV_COMMISSION_RATE * 100) / 100;
+  const driver_earning = Math.round(total_fare * DRIVER_RATE * 100) / 100;
+
+  // Check driver has no other active ride
+  const { data: existing } = await supabaseAdmin
+    .from("rides")
+    .select("id")
+    .eq("driver_id", req.user.id)
+    .in("status", ["accepted", "arrived", "picked_up", "ongoing"])
+    .maybeSingle();
+
+  if (existing) {
+    return res.status(409).json({ message: "You already have an active ride in progress." });
+  }
+
+  // Create ride directly in 'ongoing' status — passenger is already on board
+  const { data, error } = await supabaseAdmin
+    .from("rides")
+    .insert({
+      driver_id:            req.user.id,
+      rider_id:             null,           // walk-in, no app rider
+      pickup_location,
+      destination_location,
+      fare:                 total_fare,
+      distance_km,
+      dev_fee,
+      driver_earning,
+      payment_method,
+      status:               "ongoing",
+      accepted_at:          new Date().toISOString(),
+    })
+    .select("*")
+    .single();
+
+  if (error) return res.status(400).json({ message: error.message });
+  return res.status(201).json(data);
+};
+
+// ── Haversine helper (server-side) ────────────────────────────────────────────
+function haversineDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+function toRad(deg) { return (deg * Math.PI) / 180; }
+
+// ── DELETE /rides/:id ─────────────────────────────────────────────────────────
 const DELETE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
 const deleteRide = async (req, res) => {
@@ -249,4 +333,5 @@ module.exports = {
   updateRideStatus,
   getActiveRide,
   deleteRide,
+  createManualRide,
 };
